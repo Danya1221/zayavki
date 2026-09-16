@@ -1,0 +1,5 @@
+.git
+.env
+*.session*
+*.db
+__pycache__

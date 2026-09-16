@@ -1,0 +1,5 @@
+aiohttp==3.12.15
+psycopg[binary]==3.2.9
+python-dotenv==1.1.1
+phonenumbers==9.0.14
+tzdata==2025.2
