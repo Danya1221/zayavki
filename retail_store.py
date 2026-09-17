@@ -1,11 +1,12 @@
-"""Versioned shared contract for rozniysa and zayavki. No Telegram side effects."""
+"""Durable local store for catalog, carts and orders. No Telegram side effects."""
 import hashlib
 import json
 import os
 import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+import copy
 
 SCHEMA_VERSION = 1
 LOCK_ID = 823740199610
@@ -30,7 +31,7 @@ class Transaction:
     def get(self, namespace, key, default=None):
         row = self.execute("SELECT value FROM retail_data WHERE namespace=%s AND key=%s",
                            (namespace, str(key))).fetchone()
-        return json.loads(row[0]) if row else default
+        return json.loads(row[0]) if row else copy.deepcopy(default)
 
     def set(self, namespace, key, value):
         self.execute(
@@ -56,7 +57,7 @@ class Transaction:
 class RetailStore:
     def __init__(self, url):
         if not url:
-            raise ValueError("Укажи общий RETAIL_DATABASE_URL для обоих ботов")
+            raise ValueError("Укажи DATABASE_URL для базы этого проекта")
         self.url = url
         self.sqlite = url.startswith("sqlite:///")
         self.path = url[len("sqlite:///"):] if self.sqlite else ""
@@ -66,7 +67,7 @@ class RetailStore:
                        "updated DOUBLE PRECISION NOT NULL,PRIMARY KEY(namespace,key))")
             version = tx.get("system", "schema_version", SCHEMA_VERSION)
             if version != SCHEMA_VERSION:
-                raise RuntimeError("Несовместимая версия общей базы: обнови оба бота")
+                raise RuntimeError("Несовместимая версия базы данных")
             tx.set("system", "schema_version", SCHEMA_VERSION)
 
     def connect(self):
@@ -106,7 +107,7 @@ class RetailStore:
         with self.transaction() as tx:
             return tx.scan(namespace)
 
-    def put_catalog(self, products, *, confirmed, checked_at=None):
+    def put_catalog(self, products, *, confirmed, checked_at=None, _tx=None):
         """Atomically replace the visible selection, preserving removed-product tombstones.
 
         Product IDs do not contain the price. Already submitted orders are immutable
@@ -116,7 +117,7 @@ class RetailStore:
         current = {p["id"]: dict(p) for p in products}
         if len(current) != len(products):
             raise ValueError("Повторяющийся идентификатор позиции")
-        with self.transaction() as tx:
+        with (self.transaction() if _tx is None else nullcontext(_tx)) as tx:
             old = dict(tx.scan("catalog"))
             changed = set()
             for product_id, product in current.items():
@@ -144,8 +145,8 @@ class RetailStore:
                                          "count": len(products), "version": SCHEMA_VERSION})
             return cancelled
 
-    def mark_uncertain(self, reason):
-        with self.transaction() as tx:
+    def mark_uncertain(self, reason, *, _tx=None):
+        with (self.transaction() if _tx is None else nullcontext(_tx)) as tx:
             meta = tx.get("system", "catalog", {})
             meta.update(confirmed=False, error=str(reason)[:300], attempted_at=time.time())
             tx.set("system", "catalog", meta)

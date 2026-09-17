@@ -3,6 +3,7 @@ import logging
 import signal
 from contextlib import suppress
 
+from catalog_api import start_server
 from bot import RequestBot
 from orders import OrderService
 from retail_store import RetailStore, ProcessLease
@@ -39,9 +40,11 @@ async def main():
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(bot.stop.wait(), 5)
 
-    tasks = [asyncio.create_task(bot.run()), asyncio.create_task(watch_lock()),
-             asyncio.create_task(bot.stop.wait())]
+    tasks, runner = [], None
     try:
+        runner = await start_server(store, settings.sync_api_key, settings.port)
+        tasks = [asyncio.create_task(bot.run()), asyncio.create_task(watch_lock()),
+                 asyncio.create_task(bot.stop.wait())]
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
@@ -50,6 +53,8 @@ async def main():
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if runner is not None:
+            await runner.cleanup()
         await api.close()
         lease.close()
 

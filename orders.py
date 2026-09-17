@@ -235,7 +235,6 @@ class OrderService:
                 "requires_confirmation": not confirmed, "status": "new", "created_at": now,
                 "completed_at": None, "expires_at": None, "submission_key": submission_key,
                 "internal_notes": [], "history": [{"at": now, "actor": user_id, "action": "created"}],
-                "terms": tx.get("profiles", str(user_id), {}).get("terms", {}),
                 "messages": []}
             tx.set("orders", order_id, order)
             tx.set("submissions", submission_key, order_id)

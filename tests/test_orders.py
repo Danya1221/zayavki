@@ -218,9 +218,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         self.store.put_catalog([PRODUCT], confirmed=True)
         self.service = OrderService(self.store, [1])
         self.api = FakeAPI()
-        self.settings = Settings("fake", self.store.url, (1,), privacy_url="https://example.test/privacy",
-                                 terms_url="https://example.test/terms", seller_info="Тестовый продавец",
-                                 pickup_address="Москва, пункт выдачи")
+        self.settings = Settings("fake", self.store.url, (1,))
         self.bot = RequestBot(self.service, self.settings, self.api)
         self.seq = 0
 
@@ -241,7 +239,6 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_complete_customer_flow(self):
         await self.input("/start p_" + PRODUCT["id"])
         await self.input(callback="checkout")
-        await self.input(callback="begin")
         await self.input("Иван Петров")
         await self.input("89123456789")
         await self.input(callback="delivery:courier")

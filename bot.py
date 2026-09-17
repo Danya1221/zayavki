@@ -147,9 +147,8 @@ class RequestBot:
             text = ("<b>Как получить заказ?</b>\n\nДоставка платная. Менеджер рассчитает стоимость, "
                     "а ты подтвердишь итоговую сумму перед отправкой.")
             rows = [[b("🚚 Курьер", "delivery:courier"), b("📦 Транспортная компания", "delivery:shipping")]]
-            if self.settings.pickup_address:
-                rows.append([b("🏬 Самовывоз", "delivery:pickup")])
-                text += "\n\nСамовывоз: " + e(self.settings.pickup_address)
+            rows.append([b("🏬 Самовывоз", "delivery:pickup")])
+            text += "\n\nМесто и время самовывоза согласует менеджер."
             rows += [[b("💬 Примечание", "note:delivery"), b("← Назад", "back")]]
             return await self.work(user_id, text, kb(rows))
         if field == "review":
@@ -191,7 +190,7 @@ class RequestBot:
         total = sum(Decimal(i["price"]) * i["qty"] for i in cart["items"])
         text += "\n\nТовары: <b>" + cash(total, cart["items"][0]["currency"]) + "</b>"
         if cart["delivery"] == "pickup":
-            text += "\nСамовывоз: " + e(self.settings.pickup_address)
+            text += "\nСамовывоз: место и время согласует менеджер."
         else:
             text += "\nДоставка платная. Её стоимость менеджер пришлёт на согласование отдельно."
         text += "\n\nНаличие подтверждает менеджер. Заявки принимаются круглосуточно."
@@ -273,23 +272,10 @@ class RequestBot:
                 await self.db(self.service.change_qty, actor, parts[2], int(parts[3]), action_id)
                 return await self.show_cart(actor)
             return await self.start_note(actor, "item_" + parts[2], "cart")
-        if data == "checkout":
-            if not self.settings.checkout_ready():
-                raise UserError("Магазин ещё настраивает оформление. Пожалуйста, свяжись с менеджером.")
+        if data in {"checkout", "begin", "edit"}:
+            # "begin" is retained for keyboards sent by the previous version.
             if not (await self.db(self.service.cart, actor)).get("items"):
                 raise UserError("Сначала добавь устройство в корзину.")
-            text = ("<b>Перед оформлением</b>\n\n" + e(self.settings.seller_info) +
-                    "\n\nДля обработки заявки понадобятся имя, телефон и адрес при доставке.\n"
-                    f'<a href="{e(self.settings.privacy_url)}">Политика обработки данных</a>\n'
-                    f'<a href="{e(self.settings.terms_url)}">Условия покупки и получения</a>')
-            return await self.work(actor, text, kb([[b("Ознакомлен, продолжить", "begin")], [b("← Корзина", "cart")]]))
-        if data in {"begin", "edit"}:
-            if not self.settings.checkout_ready():
-                raise UserError("Оформление ещё не настроено.")
-            if data == "begin":
-                await self.db(self.service.update_profile, actor, {"terms_seen_at": time.time(), "terms": {"seen_at": time.time(),
-                    "privacy_url": self.settings.privacy_url, "terms_url": self.settings.terms_url,
-                    "seller_info": self.settings.seller_info}})
             return await self.ask(actor, "name")
         if data == "back":
             profile = await self.db(self.service.profile, actor)
@@ -305,8 +291,6 @@ class RequestBot:
             return await self.advance(actor, step)
         if data.startswith("delivery:"):
             value = data.split(":", 1)[1]
-            if value == "pickup" and not self.settings.pickup_address:
-                raise UserError("Самовывоз пока не настроен.")
             await self.db(self.service.field, actor, "delivery", value)
             return await self.advance(actor, "delivery")
         if data.startswith("note:"):
@@ -314,13 +298,6 @@ class RequestBot:
             profile = await self.db(self.service.profile, actor)
             return await self.start_note(actor, context, profile.get("step", "cart"))
         if data.startswith("submit:"):
-            profile = await self.db(self.service.profile, actor)
-            if not profile.get("terms_seen_at"):
-                # A duplicate callback may refer to a previously submitted order;
-                # submit() still validates its deterministic submission token.
-                previous = await self.db(self.service.store.get, "submissions", f'{actor}:{data[7:]}')
-                if not previous:
-                    raise UserError("Ознакомься с условиями перед отправкой заявки.")
             order = await self.db(self.service.submit, user, data[7:])
             await self.work(actor, "✅ Заявка принята. Менеджер проверит наличие и свяжется с тобой.\n\n" +
                             order_text(order, self.service.status_label(order["status"])),
@@ -388,8 +365,7 @@ class RequestBot:
         self.service.require_admin(actor)
         await self.db(self.service.update_profile, actor, {"step": "idle"})
         active = await self.db(self.service.list_orders, actor)
-        warning = "" if self.settings.checkout_ready() else "\n⚠️ Заполни SELLER_INFO, PRIVACY_URL и TERMS_URL для начала оформления."
-        await self.work(actor, f"<b>Заявки магазина</b>\nАктивных: {len(active)}" + warning, kb([
+        await self.work(actor, f"<b>Заявки магазина</b>\nАктивных: {len(active)}", kb([
             [b("📥 Активные", "a:list:0"), b("🗄 Архив · 7 дней", "a:archive:0")],
             [b("🔎 Найти заявку", "a:search"), b("⚙️ Статусы", "a:statuses")],
             [b("📝 Приветствие", "a:welcome"), b("🛒 Режим покупателя", "cart")],

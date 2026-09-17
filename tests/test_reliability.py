@@ -13,13 +13,10 @@ from views import chunks, visible_units, order_text
 class ReliabilityTests(unittest.TestCase):
     setUp, tearDown, fill = fixtures.DomainTests.setUp, fixtures.DomainTests.tearDown, fixtures.DomainTests.fill
 
-    def test_checkout_conditions_saved_in_order_snapshot(self):
-        token = self.fill()
-        accepted = {'seen_at':time.time(), 'terms_url':'https://example.test/terms'}
-        self.service.update_profile(200, {'terms':accepted})
-        order = self.service.submit(USER,token)
-        self.assertEqual(order['terms'],accepted)
-        self.assertNotIn('terms',self.service.profile(200))
+    def test_order_needs_no_seller_documents_or_terms_confirmation(self):
+        order = self.service.submit(USER, self.fill())
+        self.assertEqual(order['status'], 'new')
+        self.assertNotIn('terms', order)
 
     def test_customer_order_list_is_scoped_to_owner(self):
         self.service.submit(USER,self.fill())
