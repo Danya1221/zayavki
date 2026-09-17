@@ -112,7 +112,7 @@ class RetailStore:
         Product IDs do not contain the price. Already submitted orders are immutable
         snapshots and are deliberately not touched by this method.
         """
-        now = checked_at or time.time()
+        now = time.time() if checked_at is None else checked_at
         current = {p["id"]: dict(p) for p in products}
         if len(current) != len(products):
             raise ValueError("Повторяющийся идентификатор позиции")
@@ -165,6 +165,13 @@ class RetailStore:
                             "messages": order.get("messages", [])})
                     tx.delete("orders", order_id)
                     tx.delete("submissions", order.get("submission_key", ""))
+            for key, action in tx.scan("actions"):
+                if action.get("at", 0) < now - 2 * 86400:
+                    tx.delete("actions", key)
+            for key, event in tx.scan("outbox"):
+                oid = event.get("payload", {}).get("order_id")
+                if oid and event.get("kind") != "erase_order_messages" and not tx.get("orders", oid):
+                    tx.delete("outbox", key)
             # Inactive profiles keep only the persistent greeting and Telegram ID.
             for user_id, profile in tx.scan("profiles"):
                 if profile.get("updated", 0) < now - draft_hours * 3600 and not tx.get("carts", user_id):

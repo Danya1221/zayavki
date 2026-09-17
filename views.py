@@ -1,4 +1,5 @@
 import html
+import re
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -80,15 +81,22 @@ def order_text(order, label, *, admin=False):
     return text
 
 
+def visible_units(text):
+    return len(html.unescape(re.sub(r"<[^>]+>", "", text)).encode("utf-16-le")) // 2
+
+
 def chunks(text, limit=3500):
-    # Split only at paragraph/line boundaries, never inside an HTML entity/tag.
+    # All generated tags close on their line; never split an entity or tag.
     pages, current = [], ""
-    for paragraph in text.split("\n\n"):
-        if len((current + "\n\n" + paragraph).encode("utf-16-le")) // 2 > limit and current:
-            pages.append(current)
-            current = paragraph
+    for line in text.split("\n"):
+        candidate = (current + "\n" + line).strip("\n")
+        if visible_units(candidate) > limit and current:
+            pages.append(current.rstrip())
+            current = line
         else:
-            current = (current + "\n\n" + paragraph).strip()
+            current = candidate
+        if visible_units(current) > limit:
+            raise ValueError("Одна строка превышает лимит Telegram")
     if current:
-        pages.append(current)
+        pages.append(current.rstrip())
     return pages

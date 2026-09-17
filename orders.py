@@ -70,6 +70,7 @@ def text_field(field, value):
 
 class OrderService:
     def __init__(self, store, admins, *, archive_days=7, draft_hours=24, fresh_seconds=1800):
+        self._statuses = None
         self.store = store
         self.admins = frozenset(int(i) for i in admins)
         if not self.admins:
@@ -81,7 +82,9 @@ class OrderService:
             raise PermissionError("Нет доступа")
 
     def statuses(self):
-        return self.store.get("settings", "statuses", DEFAULT_STATUSES)
+        if self._statuses is None:
+            self._statuses = self.store.get("settings", "statuses", DEFAULT_STATUSES)
+        return self._statuses
 
     def status_label(self, status):
         return next((s["label"] for s in self.statuses() if s["id"] == status), status)
@@ -232,6 +235,7 @@ class OrderService:
                 "requires_confirmation": not confirmed, "status": "new", "created_at": now,
                 "completed_at": None, "expires_at": None, "submission_key": submission_key,
                 "internal_notes": [], "history": [{"at": now, "actor": user_id, "action": "created"}],
+                "terms": tx.get("profiles", str(user_id), {}).get("terms", {}),
                 "messages": []}
             tx.set("orders", order_id, order)
             tx.set("submissions", submission_key, order_id)
@@ -248,6 +252,12 @@ class OrderService:
         if order.get("expires_at") and order["expires_at"] <= time.time():
             raise UserError("Заявка больше не находится в оперативном архиве.")
         return order
+
+    def customer_orders(self, actor):
+        now = time.time()
+        return sorted([o for _, o in self.store.scan("orders") if o["user_id"] == int(actor)
+                       and (not o.get("expires_at") or o["expires_at"] > now)],
+                      key=lambda o: o["created_at"], reverse=True)
 
     def list_orders(self, actor, *, archive=False, status=None, query=""):
         self.require_admin(actor)
@@ -267,7 +277,7 @@ class OrderService:
         self.require_admin(actor)
         with self.store.transaction() as tx:
             order = tx.get("orders", order_id)
-            if not order:
+            if not order or (order.get("expires_at") and order["expires_at"] <= time.time()):
                 raise UserError("Заявка не найдена.")
             settings = tx.get("settings", "statuses", DEFAULT_STATUSES)
             definition = next((s for s in settings if s["id"] == status and not s.get("hidden")), None)
@@ -330,7 +340,7 @@ class OrderService:
             raise UserError("Заметка не может быть пустой.")
         with self.store.transaction() as tx:
             order = tx.get("orders", order_id)
-            if not order:
+            if not order or (order.get("expires_at") and order["expires_at"] <= time.time()):
                 raise UserError("Заявка не найдена.")
             order["internal_notes"].append({"actor": int(actor), "at": time.time(), "text": text})
             tx.set("orders", order_id, order)
@@ -359,6 +369,7 @@ class OrderService:
                     raise UserError("Можно настроить до 20 статусов.")
                 statuses.append({"id": "s" + uuid.uuid4().hex[:8], "label": label, "terminal": bool(terminal)})
             tx.set("settings", "statuses", statuses)
+            self._statuses = None
             return statuses
 
     def move_status(self, actor, status_id, delta):
@@ -371,6 +382,7 @@ class OrderService:
             target = max(0, min(len(statuses) - 1, index + int(delta)))
             statuses.insert(target, statuses.pop(index))
             tx.set("settings", "statuses", statuses)
+            self._statuses = None
 
     def remember_message(self, order_id, chat_id, message_id, role, page=0):
         with self.store.transaction() as tx:

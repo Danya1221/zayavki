@@ -3,6 +3,8 @@ import asyncio
 import hashlib
 import logging
 import time
+import sqlite3
+import psycopg
 from contextlib import suppress
 from decimal import Decimal
 
@@ -83,7 +85,7 @@ class RequestBot:
                    "Доставка платная, стоимость согласуем отдельно.")
         text = await self.db(self.service.store.get, "settings", "welcome", default)
         profile = await self.db(self.service.profile, user_id)
-        rows = [[b("🛒 Моя корзина", "cart")]]
+        rows = [[b("🛒 Моя корзина", "cart"), b("Мои заявки", "mine:0")]]
         url = await self.catalog_url()
         if url:
             rows.insert(0, [b("📦 Открыть прайс", url=url)])
@@ -91,7 +93,7 @@ class RequestBot:
             rows.append([b("🗂 Управление заявками", "a:menu")])
         payload_hash = hashlib.sha256((text + str(rows)).encode()).hexdigest()
         welcome_id = profile.get("welcome_id")
-        if welcome_id and profile.get("welcome_hash") != payload_hash:
+        if welcome_id:
             try:
                 await self.api.call("editMessageText", chat_id=user_id, message_id=welcome_id,
                                     text=e(text), reply_markup=kb(rows), parse_mode="HTML")
@@ -106,7 +108,7 @@ class RequestBot:
         await self.db(self.service.update_profile, user_id,
                       {"welcome_id": welcome_id, "welcome_hash": payload_hash})
 
-    async def show_cart(self, user_id):
+    async def show_cart(self, user_id, page=0):
         cart = await self.db(self.service.cart, user_id)
         if not cart.get("items"):
             await self.work(user_id, "Корзина пуста. Выбери устройство в прайсе.", kb([[b("📦 Прайс", url=await self.catalog_url())]]) if await self.catalog_url() else None)
@@ -116,11 +118,19 @@ class RequestBot:
         text += "\n\n<b>Товары: " + cash(total, cart["items"][0]["currency"]) + "</b>\nДоставка оплачивается отдельно."
         rows = []
         token = cart["token"]
-        for index, item in enumerate(cart["items"], 1):
+        page = max(0, min(page, (len(cart["items"]) - 1) // 8))
+        for index, item in enumerate(cart["items"][page*8:(page+1)*8], page*8+1):
             pid = item["product_id"]
             rows.append([b(f"− {index}", f"qty:{token}:{pid}:-1"), b(f"{index}: {item['qty']} шт.", "noop"),
                          b(f"+ {index}", f"qty:{token}:{pid}:1"),
                          b("💬", f"itemnote:{token}:{pid}")])
+        paging = []
+        if page:
+            paging.append(b("← Товары", "cartpage:" + str(page-1)))
+        if (page+1)*8 < len(cart["items"]):
+            paging.append(b("Товары →", "cartpage:" + str(page+1)))
+        if paging:
+            rows.append(paging)
         rows += [[b("💬 Примечание к корзине", "note:cart")],
                  [b("Оформить заявку →", "checkout"), b("Очистить", "clear")]]
         url = await self.catalog_url()
@@ -202,6 +212,7 @@ class RequestBot:
                                         text="Открой личный чат с ботом", show_alert=True)
             return
         actor = int(actor)
+        await self.db(self.service.statuses)
         if callback:
             with suppress(TelegramError):
                 await self.api.call("answerCallbackQuery", callback_query_id=callback["id"])
@@ -226,6 +237,28 @@ class RequestBot:
             return
         if data == "cart":
             return await self.show_cart(actor)
+        if data.startswith("cartpage:"):
+            return await self.show_cart(actor, int(data.split(":")[1]))
+        if data.startswith("mine:"):
+            orders = await self.db(self.service.customer_orders, actor)
+            page = max(0, min(int(data.split(":")[1]), max(0, (len(orders)-1)//8)))
+            rows = [[b(o["id"] + " · " + self.service.status_label(o["status"]), "own:" + o["id"])]
+                    for o in orders[page*8:(page+1)*8]]
+            nav = []
+            if page:
+                nav.append(b("←", "mine:" + str(page-1)))
+            if (page+1)*8 < len(orders):
+                nav.append(b("→", "mine:" + str(page+1)))
+            if nav:
+                rows.append(nav)
+            rows.append([b("🛒 Корзина", "cart")])
+            return await self.work(actor, "<b>Мои заявки</b>\n" + ("Выбери заявку." if orders else "Заявок пока нет."), kb(rows))
+        if data.startswith("own:"):
+            order = await self.db(self.service.get_order, actor, data.split(":")[1])
+            if order["user_id"] != actor:
+                raise UserError("Заявка не найдена.")
+            return await self.work(actor, order_text(order, self.service.status_label(order["status"])),
+                                   kb([[b("← Мои заявки", "mine:0")]]), role="client", order_id=order["id"])
         if data == "clear":
             await self.db(self.service.cancel_cart, actor)
             return await self.work(actor, "Незавершённое оформление удалено.")
@@ -254,7 +287,9 @@ class RequestBot:
             if not self.settings.checkout_ready():
                 raise UserError("Оформление ещё не настроено.")
             if data == "begin":
-                await self.db(self.service.update_profile, actor, {"terms_seen_at": time.time()})
+                await self.db(self.service.update_profile, actor, {"terms_seen_at": time.time(), "terms": {"seen_at": time.time(),
+                    "privacy_url": self.settings.privacy_url, "terms_url": self.settings.terms_url,
+                    "seller_info": self.settings.seller_info}})
             return await self.ask(actor, "name")
         if data == "back":
             profile = await self.db(self.service.profile, actor)
@@ -515,6 +550,8 @@ class RequestBot:
                     if not any(x in str(exc).lower() for x in ("not modified", "not found", "can't be edited")):
                         raise
             return
+        if order.get("completed_at"):
+            return
         if kind == "order_admin":
             target = int(payload["admin_id"])
             if target not in self.service.admins:
@@ -554,11 +591,12 @@ class RequestBot:
     async def maintenance_once(self):
         await self.db(self.service.store.housekeeping, draft_hours=self.settings.draft_hours,
                       archive_days=self.settings.archive_days)
+        await self.db(self.service.statuses)
         events = await self.db(self.service.store.scan, "outbox")
         events.sort(key=lambda pair: pair[1].get("created", 0))
-        for event_id, event in events[:40]:
-            if event.get("uncertain") or event.get("retry_at", 0) > time.time():
-                continue
+        eligible = [(key, event) for key, event in events if not event.get("uncertain")
+                    and event.get("retry_at", 0) <= time.time()]
+        for event_id, event in eligible[:40]:
             try:
                 await self.dispatch_event(event_id, event)
             except AmbiguousSend:
@@ -613,7 +651,7 @@ class RequestBot:
                     await self.db(self.service.store.set, "system", "updates:" + str(self.bot_id), offset)
                 log.warning("Ответ интерфейса не подтверждён Telegram")
                 await asyncio.sleep(2)
-            except (TelegramError, OSError):
+            except (TelegramError, OSError, sqlite3.Error, psycopg.Error):
                 log.warning("Временная ошибка Telegram/базы; повтор через 3 секунды")
                 await asyncio.sleep(3)
             except Exception:
