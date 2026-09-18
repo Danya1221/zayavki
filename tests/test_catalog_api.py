@@ -96,11 +96,11 @@ class IngestTests(unittest.TestCase):
 
     def test_invalid_snapshots_never_replace_catalog(self):
         ingest(self.store,snapshot())
-        for value in (None, {}, snapshot(2,products=[PRODUCT,PRODUCT]), snapshot(2,confirmed='true'),
+        for value in (None, {}, snapshot(2,confirmed='true'),
                       snapshot(2,checked_at=float('nan')), snapshot(2,products=[dict(PRODUCT,price='NaN')]),
                       snapshot(2,products=[dict(PRODUCT,price='-1')]), snapshot(2,products=[dict(PRODUCT,price='1.234')]),
                       snapshot(2,products=[dict(PRODUCT,id='invalid')]), snapshot(2,products=[dict(PRODUCT,currency='XYZ')]),
-                      snapshot(2,catalog_url='https://evil.test/'), snapshot(2,checked_at=time.time()+3600)):
+                      snapshot(2,checked_at=time.time()+3600)):
             with self.subTest(value=value):
                 with self.assertRaises(BadCatalog):
                     ingest(self.store,value)
@@ -151,13 +151,26 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status,409)
 
     async def test_invalid_catalog_returns_actionable_detail(self):
-        duplicate = snapshot(products=[PRODUCT, PRODUCT])
-        response = await self.client.post('/api/catalog/sync', json=duplicate, headers=self.headers)
+        bad = snapshot(products=[dict(PRODUCT, id='invalid')])
+        response = await self.client.post('/api/catalog/sync', json=bad, headers=self.headers)
         self.assertEqual(response.status, 400)
         body = await response.json()
         self.assertEqual(body['error'], 'invalid_catalog')
-        self.assertIn('duplicate product ID', body['detail'])
-        self.assertIn(PRODUCT['id'], body['detail'])
+        self.assertIn('invalid product ID', body['detail'])
+        self.assertIn('Item 1', body['detail'])
+
+    async def test_duplicate_product_ids_are_collapsed_to_lowest_price(self):
+        duplicate = snapshot(products=[PRODUCT, dict(PRODUCT, price='79000')])
+        response = await self.client.post('/api/catalog/sync', json=duplicate, headers=self.headers)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.store.get('catalog', PRODUCT['id'])['price'], '79000')
+
+    async def test_bad_optional_catalog_url_does_not_reject_snapshot(self):
+        response = await self.client.post('/api/catalog/sync',
+                                          json=snapshot(catalog_url='https://evil.test/'),
+                                          headers=self.headers)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(self.store.get('catalog', PRODUCT['id'])['price'], '80000')
 
     async def test_malformed_json_rejected_without_server_failure(self):
         response=await self.client.post('/api/catalog/sync',data='{broken',headers=self.headers)
