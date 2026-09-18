@@ -150,6 +150,15 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         response=await self.client.post('/api/catalog/sync',json=data,headers=self.headers)
         self.assertEqual(response.status,409)
 
+    async def test_invalid_catalog_returns_actionable_detail(self):
+        duplicate = snapshot(products=[PRODUCT, PRODUCT])
+        response = await self.client.post('/api/catalog/sync', json=duplicate, headers=self.headers)
+        self.assertEqual(response.status, 400)
+        body = await response.json()
+        self.assertEqual(body['error'], 'invalid_catalog')
+        self.assertIn('duplicate product ID', body['detail'])
+        self.assertIn(PRODUCT['id'], body['detail'])
+
     async def test_malformed_json_rejected_without_server_failure(self):
         response=await self.client.post('/api/catalog/sync',data='{broken',headers=self.headers)
         self.assertEqual(response.status,400)
