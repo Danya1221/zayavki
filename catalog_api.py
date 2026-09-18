@@ -16,6 +16,8 @@ from retail_store import dump
 log = logging.getLogger(__name__)
 MAX_BODY = 20 * 1024 * 1024
 MAX_PRODUCTS = 30_000
+MAX_TITLE = 3500
+MAX_LABEL = 200
 
 
 class BadCatalog(ValueError):
@@ -101,10 +103,20 @@ def validate_payload(data):
             if type(p["storage_rank"]) is not int or not 0 <= p["storage_rank"] <= 1_000_000_000:
                 raise BadCatalog(f"Item {index}: invalid storage rank")
             row["storage_rank"] = p["storage_rank"]
+        if pid in positions:
+            current_index = positions[pid]
+            current = clean[current_index]
+            if Decimal(row["price"]) < Decimal(current["price"]):
+                clean[current_index] = row
+            continue
+        positions[pid] = len(clean)
         clean.append(row)
     result.update(products=clean, confirmed=data["confirmed"], checked_at=checked)
     if data.get("catalog_url"):
-        result["catalog_url"] = telegram_link(data["catalog_url"])
+        try:
+            result["catalog_url"] = telegram_link(data["catalog_url"])
+        except BadCatalog:
+            log.warning("Игнорирую некорректную необязательную ссылку каталога в snapshot")
     return result
 
 
