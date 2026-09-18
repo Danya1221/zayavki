@@ -63,39 +63,43 @@ def validate_payload(data):
     if type(checked) not in {int, float} or not math.isfinite(checked) or not 0 <= checked <= time.time()+300:
         raise BadCatalog("Invalid supplier timestamp")
     clean, ids = [], set()
-    for p in products:
+    for index, p in enumerate(products, start=1):
         if not isinstance(p, dict):
-            raise BadCatalog("Invalid product")
+            raise BadCatalog(f"Item {index}: product must be an object")
         pid = p.get("id")
-        if not isinstance(pid, str) or not re.fullmatch(r"[a-f0-9]{24}", pid) or pid in ids:
-            raise BadCatalog("Invalid or duplicate product ID")
+        if not isinstance(pid, str) or not re.fullmatch(r"[a-f0-9]{24}", pid):
+            raise BadCatalog(f"Item {index}: invalid product ID")
+        if pid in ids:
+            title = p.get("title") if isinstance(p.get("title"), str) else ""
+            label = (": " + title[:100]) if title else ""
+            raise BadCatalog(f"Item {index}: duplicate product ID {pid}{label}")
         ids.add(pid)
         row = {"id": pid}
         for field, maximum in (("title", 700), ("brand", 100), ("section", 100)):
             value = p.get(field)
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
-                raise BadCatalog("Invalid product " + field)
+                raise BadCatalog(f"Item {index}: invalid product {field}")
             row[field] = value
         raw_price = p.get("price")
         if not isinstance(raw_price, str) or len(raw_price) > 32:
-            raise BadCatalog("Invalid price")
+            raise BadCatalog(f"Item {index}: invalid price")
         try:
             price = Decimal(raw_price)
             if not price.is_finite() or not 0 < price <= 10_000_000 or price != price.quantize(Decimal("0.01")):
-                raise BadCatalog("Invalid price")
+                raise BadCatalog(f"Item {index}: invalid price")
         except InvalidOperation:
-            raise BadCatalog("Invalid price") from None
+            raise BadCatalog(f"Item {index}: invalid price") from None
         if p.get("currency") not in {"RUB", "USD", "EUR"}:
-            raise BadCatalog("Invalid currency")
+            raise BadCatalog(f"Item {index}: invalid currency")
         row.update(price=raw_price, currency=p["currency"])
         for field in ("model", "sim", "condition"):
             if field in p:
                 if not isinstance(p[field], str) or len(p[field]) > 100:
-                    raise BadCatalog("Invalid product variant")
+                    raise BadCatalog(f"Item {index}: invalid product variant {field}")
                 row[field] = p[field]
         if "storage_rank" in p:
             if type(p["storage_rank"]) is not int or not 0 <= p["storage_rank"] <= 1_000_000_000:
-                raise BadCatalog("Invalid storage rank")
+                raise BadCatalog(f"Item {index}: invalid storage rank")
             row["storage_rank"] = p["storage_rank"]
         clean.append(row)
     result.update(products=clean, confirmed=data["confirmed"], checked_at=checked)
@@ -154,8 +158,10 @@ def create_app(store, key):
             return web.json_response({"error": "catalog_too_large"}, status=413)
         except StaleCatalog:
             return web.json_response({"error": "stale_revision"}, status=409)
-        except (BadCatalog, ValueError, TypeError, UnicodeError):
-            return web.json_response({"error": "invalid_catalog"}, status=400)
+        except BadCatalog as exc:
+            return web.json_response({"error": "invalid_catalog", "detail": str(exc)[:500]}, status=400)
+        except (ValueError, TypeError, UnicodeError):
+            return web.json_response({"error": "invalid_catalog", "detail": "Malformed JSON or catalog payload"}, status=400)
         except Exception as exc:
             log.warning("Каталог не принят: %s", type(exc).__name__)
             return web.json_response({"error": "temporarily_unavailable"}, status=503)
