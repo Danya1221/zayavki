@@ -18,6 +18,7 @@ MAX_BODY = 20 * 1024 * 1024
 MAX_PRODUCTS = 30_000
 MAX_TITLE = 3500
 MAX_LABEL = 200
+CHECKOUT_BUILD = "checkout-2026.09.18-1917"
 
 
 class BadCatalog(ValueError):
@@ -204,5 +205,5 @@ async def start_server(store, key, port, host="0.0.0.0"):
     except BaseException:
         await runner.cleanup()
         raise
-    log.info("API каталога запущен на порту %s", port)
+    log.info("API каталога запущен на порту %s · сборка %s", port, CHECKOUT_BUILD)
     return runner
