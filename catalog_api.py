@@ -41,11 +41,12 @@ def validate_payload(data):
     if not isinstance(data, dict) or data.get("protocol") != 1:
         raise BadCatalog("Unsupported protocol")
     version = data.get("revision")
-    if type(version) is not int or not 0 < version <= int((time.time()+300) * 1_000_000):
+    if type(version) is not int or not 0 < version <= int((time.time() + 300) * 1_000_000):
         raise BadCatalog("Invalid revision or sender clock")
     operation = data.get("operation")
     if operation not in {"snapshot", "uncertain", "catalog_url"}:
         raise BadCatalog("Unknown operation")
+
     result = {"protocol": 1, "revision": version, "operation": operation}
     if operation == "uncertain":
         reason = data.get("reason")
@@ -53,35 +54,38 @@ def validate_payload(data):
             raise BadCatalog("Invalid reason")
         result["reason"] = reason
         return result
+
     if operation == "catalog_url":
         result["url"] = telegram_link(data.get("url"))
         return result
+
     products = data.get("products")
     if not isinstance(products, list) or len(products) > MAX_PRODUCTS:
         raise BadCatalog("Invalid product list")
     if type(data.get("confirmed")) is not bool:
         raise BadCatalog("Invalid availability flag")
+
     checked = data.get("checked_at")
-    if type(checked) not in {int, float} or not math.isfinite(checked) or not 0 <= checked <= time.time()+300:
+    if type(checked) not in {int, float} or not math.isfinite(checked) or not 0 <= checked <= time.time() + 300:
         raise BadCatalog("Invalid supplier timestamp")
-    clean, ids = [], set()
+
+    clean = []
+    positions = {}
     for index, p in enumerate(products, start=1):
         if not isinstance(p, dict):
             raise BadCatalog(f"Item {index}: product must be an object")
+
         pid = p.get("id")
         if not isinstance(pid, str) or not re.fullmatch(r"[a-f0-9]{24}", pid):
             raise BadCatalog(f"Item {index}: invalid product ID")
-        if pid in ids:
-            title = p.get("title") if isinstance(p.get("title"), str) else ""
-            label = (": " + title[:100]) if title else ""
-            raise BadCatalog(f"Item {index}: duplicate product ID {pid}{label}")
-        ids.add(pid)
+
         row = {"id": pid}
-        for field, maximum in (("title", 700), ("brand", 100), ("section", 100)):
+        for field, maximum in (("title", MAX_TITLE), ("brand", MAX_LABEL), ("section", MAX_LABEL)):
             value = p.get(field)
             if not isinstance(value, str) or not value.strip() or len(value) > maximum:
                 raise BadCatalog(f"Item {index}: invalid product {field}")
             row[field] = value
+
         raw_price = p.get("price")
         if not isinstance(raw_price, str) or len(raw_price) > 32:
             raise BadCatalog(f"Item {index}: invalid price")
@@ -91,26 +95,35 @@ def validate_payload(data):
                 raise BadCatalog(f"Item {index}: invalid price")
         except InvalidOperation:
             raise BadCatalog(f"Item {index}: invalid price") from None
-        if p.get("currency") not in {"RUB", "USD", "EUR"}:
+
+        currency = p.get("currency")
+        if currency not in {"RUB", "USD", "EUR"}:
             raise BadCatalog(f"Item {index}: invalid currency")
-        row.update(price=raw_price, currency=p["currency"])
+        row.update(price=raw_price, currency=currency)
+
         for field in ("model", "sim", "condition"):
             if field in p:
-                if not isinstance(p[field], str) or len(p[field]) > 100:
+                if not isinstance(p[field], str) or len(p[field]) > MAX_LABEL:
                     raise BadCatalog(f"Item {index}: invalid product variant {field}")
                 row[field] = p[field]
+
         if "storage_rank" in p:
             if type(p["storage_rank"]) is not int or not 0 <= p["storage_rank"] <= 1_000_000_000:
                 raise BadCatalog(f"Item {index}: invalid storage rank")
             row["storage_rank"] = p["storage_rank"]
+
         if pid in positions:
             current_index = positions[pid]
             current = clean[current_index]
+            if current["currency"] != row["currency"]:
+                raise BadCatalog(f"Item {index}: conflicting duplicate product ID {pid}")
             if Decimal(row["price"]) < Decimal(current["price"]):
                 clean[current_index] = row
             continue
+
         positions[pid] = len(clean)
         clean.append(row)
+
     result.update(products=clean, confirmed=data["confirmed"], checked_at=checked)
     if data.get("catalog_url"):
         try:
@@ -118,7 +131,6 @@ def validate_payload(data):
         except BadCatalog:
             log.warning("Игнорирую некорректную необязательную ссылку каталога в snapshot")
     return result
-
 
 def ingest(store, payload):
     data = validate_payload(payload)
