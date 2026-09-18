@@ -174,6 +174,30 @@ def create_app(store, key):
     async def health(request):
         return web.json_response({"ok": True, "service": "zayavki", "protocol": 1})
 
+    async def validation(request):
+        """Validate a catalog snapshot without mutating orders or catalog state."""
+        try:
+            payload = await request.json()
+            data = validate_payload(payload)
+            if data.get("operation") != "snapshot":
+                raise BadCatalog("Validation endpoint accepts snapshot only")
+            return web.json_response({
+                "ok": True,
+                "protocol": 1,
+                "revision": data["revision"],
+                "products": len(data["products"]),
+                "build": CHECKOUT_BUILD,
+            })
+        except web.HTTPRequestEntityTooLarge:
+            return web.json_response({"error": "catalog_too_large"}, status=413)
+        except BadCatalog as exc:
+            return web.json_response({"error": "invalid_catalog", "detail": str(exc)[:500]}, status=400)
+        except (ValueError, TypeError, UnicodeError):
+            return web.json_response({"error": "invalid_catalog", "detail": "Malformed JSON or catalog payload"}, status=400)
+        except Exception as exc:
+            log.warning("Тест каталога не принят: %s", type(exc).__name__)
+            return web.json_response({"error": "temporarily_unavailable"}, status=503)
+
     async def sync(request):
         try:
             payload = await request.json()
@@ -193,6 +217,7 @@ def create_app(store, key):
 
     app = web.Application(middlewares=[authorize], client_max_size=MAX_BODY)
     app.router.add_get("/health", health)
+    app.router.add_post("/api/catalog/validate", validation)
     app.router.add_post("/api/catalog/sync", sync)
     return app
 
