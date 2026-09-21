@@ -76,6 +76,19 @@ class BotReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(sum(len(row) for row in markup['inline_keyboard']),100)
         self.assertTrue(any(b.get('callback_data')=='cartpage:1' for row in markup['inline_keyboard'] for b in row))
 
+    async def test_cart_has_no_per_item_comment_buttons(self):
+        self.store.put_catalog([PRODUCT], confirmed=True)
+        self.service.add(200, PRODUCT['id'])
+        await self.bot.show_cart(200)
+        markup = [p['reply_markup'] for m,p in self.api.calls if m=='sendMessage' and p.get('reply_markup')][-1]
+        callbacks = [
+            button.get('callback_data', '')
+            for row in markup['inline_keyboard']
+            for button in row
+        ]
+        self.assertFalse(any(value.startswith('itemnote:') for value in callbacks))
+        self.assertTrue(any(value == 'note:cart' for value in callbacks))
+
     async def test_order_older_than_48_hours_is_redacted(self):
         original = self.api.call
         async def api(method,**payload):

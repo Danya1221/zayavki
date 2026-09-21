@@ -122,8 +122,7 @@ class RequestBot:
         for index, item in enumerate(cart["items"][page*8:(page+1)*8], page*8+1):
             pid = item["product_id"]
             rows.append([b(f"− {index}", f"qty:{token}:{pid}:-1"), b(f"{index}: {item['qty']} шт.", "noop"),
-                         b(f"+ {index}", f"qty:{token}:{pid}:1"),
-                         b("💬", f"itemnote:{token}:{pid}")])
+                         b(f"+ {index}", f"qty:{token}:{pid}:1")])
         paging = []
         if page:
             paging.append(b("← Товары", "cartpage:" + str(page-1)))
