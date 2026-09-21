@@ -89,6 +89,31 @@ class BotReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(value.startswith('itemnote:') for value in callbacks))
         self.assertTrue(any(value == 'note:cart' for value in callbacks))
 
+    async def test_cart_has_full_remove_button_and_separate_checkout_clear_rows(self):
+        self.store.put_catalog([PRODUCT], confirmed=True)
+        self.service.add(200, PRODUCT['id'])
+        self.service.add(200, PRODUCT['id'])
+        await self.bot.show_cart(200)
+        markup = [p['reply_markup'] for m,p in self.api.calls if m=='sendMessage' and p.get('reply_markup')][-1]
+        rows = markup['inline_keyboard']
+
+        item_row = rows[0]
+        self.assertEqual(len(item_row), 4)
+        self.assertEqual(item_row[-1]['text'], '🗑')
+        remove_callback = item_row[-1]['callback_data']
+        self.assertTrue(remove_callback.startswith('remove:'))
+
+        checkout_rows = [row for row in rows if any(b.get('callback_data') == 'checkout' for b in row)]
+        clear_rows = [row for row in rows if any(b.get('callback_data') == 'clear' for b in row)]
+        self.assertEqual(len(checkout_rows), 1)
+        self.assertEqual(len(clear_rows), 1)
+        self.assertEqual(len(checkout_rows[0]), 1)
+        self.assertEqual(len(clear_rows[0]), 1)
+
+        token = self.service.cart(200)['token']
+        self.service.remove_item(200, PRODUCT['id'])
+        self.assertEqual(self.service.cart(200)['items'], [])
+
     async def test_old_item_notes_are_not_shown_in_cart_text(self):
         from views import items_text
         item = dict(PRODUCT, qty=1, note='старый комментарий')

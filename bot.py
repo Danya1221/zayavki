@@ -122,7 +122,8 @@ class RequestBot:
         for index, item in enumerate(cart["items"][page*8:(page+1)*8], page*8+1):
             pid = item["product_id"]
             rows.append([b(f"− {index}", f"qty:{token}:{pid}:-1"), b(f"{index}: {item['qty']} шт.", "noop"),
-                         b(f"+ {index}", f"qty:{token}:{pid}:1")])
+                         b(f"+ {index}", f"qty:{token}:{pid}:1"),
+                         b("🗑", f"remove:{token}:{pid}")])
         paging = []
         if page:
             paging.append(b("← Товары", "cartpage:" + str(page-1)))
@@ -131,7 +132,8 @@ class RequestBot:
         if paging:
             rows.append(paging)
         rows += [[b("💬 Примечание к корзине", "note:cart")],
-                 [b("Оформить заявку →", "checkout"), b("Очистить", "clear")]]
+                 [b("Оформить заявку →", "checkout")],
+                 [b("Очистить", "clear")]]
         url = await self.catalog_url()
         if url:
             rows.append([b("Добавить ещё товар", url=url)])
@@ -260,11 +262,14 @@ class RequestBot:
         if data == "clear":
             await self.db(self.service.cancel_cart, actor)
             return await self.work(actor, "Незавершённое оформление удалено.")
-        if data.startswith("qty:"):
+        if data.startswith("qty:") or data.startswith("remove:"):
             parts = data.split(":")
             cart = await self.db(self.service.cart, actor)
             if cart.get("token") != parts[1]:
                 raise UserError("Эта карточка устарела. Открой корзину.")
+            if parts[0] == "remove":
+                await self.db(self.service.remove_item, actor, parts[2], action_id)
+                return await self.show_cart(actor)
             if parts[-1] not in {"-1", "1"}:
                 raise UserError("Неизвестное действие.")
             await self.db(self.service.change_qty, actor, parts[2], int(parts[3]), action_id)

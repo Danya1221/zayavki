@@ -150,6 +150,22 @@ class OrderService:
                 tx.set("actions", action_id, {"at": time.time()})
             return cart
 
+    def remove_item(self, user_id, product_id, action_id=None):
+        """Remove one cart line completely, regardless of its quantity."""
+        with self.store.transaction() as tx:
+            cart = tx.get("carts", str(user_id), {})
+            if action_id and tx.get("actions", action_id):
+                return cart
+            cart["items"] = [
+                line for line in cart.get("items", [])
+                if line["product_id"] != product_id
+            ]
+            cart["updated"] = time.time()
+            tx.set("carts", str(user_id), cart)
+            if action_id:
+                tx.set("actions", action_id, {"at": time.time()})
+            return cart
+
     def field(self, user_id, field, value):
         if field not in FIELDS and field != "delivery":
             raise UserError("Неизвестное поле")
