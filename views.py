@@ -44,8 +44,6 @@ def items_text(items):
         rows.append(f'{index}. <b>{e(item["title"])}</b>\n'
                     f'{item["qty"]} × {cash(item["price"], item["currency"])} = '
                     f'{cash(Decimal(item["price"]) * item["qty"], item["currency"])}')
-        if item.get("note"):
-            rows.append("💬 К товару: " + e(item["note"]))
     return "\n\n".join(rows)
 
 

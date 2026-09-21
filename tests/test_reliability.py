@@ -89,6 +89,13 @@ class BotReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(value.startswith('itemnote:') for value in callbacks))
         self.assertTrue(any(value == 'note:cart' for value in callbacks))
 
+    async def test_old_item_notes_are_not_shown_in_cart_text(self):
+        from views import items_text
+        item = dict(PRODUCT, qty=1, note='старый комментарий')
+        text = items_text([item])
+        self.assertNotIn('К товару', text)
+        self.assertNotIn('старый комментарий', text)
+
     async def test_order_older_than_48_hours_is_redacted(self):
         original = self.api.call
         async def api(method,**payload):

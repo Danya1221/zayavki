@@ -260,17 +260,15 @@ class RequestBot:
         if data == "clear":
             await self.db(self.service.cancel_cart, actor)
             return await self.work(actor, "Незавершённое оформление удалено.")
-        if data.startswith("qty:") or data.startswith("itemnote:"):
+        if data.startswith("qty:"):
             parts = data.split(":")
             cart = await self.db(self.service.cart, actor)
             if cart.get("token") != parts[1]:
                 raise UserError("Эта карточка устарела. Открой корзину.")
-            if parts[0] == "qty":
-                if parts[-1] not in {"-1", "1"}:
-                    raise UserError("Неизвестное действие.")
-                await self.db(self.service.change_qty, actor, parts[2], int(parts[3]), action_id)
-                return await self.show_cart(actor)
-            return await self.start_note(actor, "item_" + parts[2], "cart")
+            if parts[-1] not in {"-1", "1"}:
+                raise UserError("Неизвестное действие.")
+            await self.db(self.service.change_qty, actor, parts[2], int(parts[3]), action_id)
+            return await self.show_cart(actor)
         if data in {"checkout", "begin", "edit"}:
             # "begin" is retained for keyboards sent by the previous version.
             if not (await self.db(self.service.cart, actor)).get("items"):
