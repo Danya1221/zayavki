@@ -18,7 +18,7 @@ MAX_BODY = 20 * 1024 * 1024
 MAX_PRODUCTS = 30_000
 MAX_TITLE = 3500
 MAX_LABEL = 200
-CHECKOUT_BUILD = "checkout-2026.09.18-1917"
+CHECKOUT_BUILD = "checkout-2026.09.21-audit"
 
 
 class BadCatalog(ValueError):
@@ -32,7 +32,10 @@ class StaleCatalog(ValueError):
 def telegram_link(value):
     if not isinstance(value, str) or len(value) > 500:
         raise BadCatalog("Invalid catalog URL")
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise BadCatalog("Invalid catalog URL") from None
     if parsed.scheme != "https" or parsed.netloc != "t.me" or not parsed.path.strip("/"):
         raise BadCatalog("Catalog URL must be a Telegram HTTPS link")
     return value

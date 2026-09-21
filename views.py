@@ -1,5 +1,6 @@
 import html
 import re
+from html.parser import HTMLParser
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -85,18 +86,61 @@ def visible_units(text):
     return len(html.unescape(re.sub(r"<[^>]+>", "", text)).encode("utf-16-le")) // 2
 
 
+class _LineSplitter(HTMLParser):
+    """Split a generated HTML line while closing/reopening formatting tags."""
+    def __init__(self, limit):
+        super().__init__(convert_charrefs=True)
+        self.limit = limit
+        self.pages, self.parts, self.tags = [], [], []
+        self.size = 0
+
+    def flush(self):
+        if self.size:
+            self.pages.append(''.join(self.parts) + ''.join('</' + tag + '>' for tag, _ in reversed(self.tags)))
+        self.parts = [raw for _, raw in self.tags]
+        self.size = 0
+
+    def handle_starttag(self, tag, attrs):
+        raw = self.get_starttag_text()
+        self.parts.append(raw)
+        self.tags.append((tag, raw))
+
+    def handle_endtag(self, tag):
+        self.parts.append('</' + tag + '>')
+        if self.tags and self.tags[-1][0] == tag:
+            self.tags.pop()
+
+    def handle_data(self, data):
+        for char in data:
+            size = 2 if ord(char) > 0xffff else 1
+            if self.size + size > self.limit:
+                self.flush()
+            self.parts.append(html.escape(char))
+            self.size += size
+
+
 def chunks(text, limit=3500):
-    # All generated tags close on their line; never split an entity or tag.
+    # Prefer complete lines. Long product titles remain intact across messages,
+    # including emoji and HTML entities, with valid markup in every message.
     pages, current = [], ""
     for line in text.split("\n"):
+        if visible_units(line) > limit:
+            if current:
+                pages.append(current.rstrip())
+                current = ""
+            splitter = _LineSplitter(limit)
+            splitter.feed(line)
+            splitter.close()
+            splitter.flush()
+            pages.extend(splitter.pages[:-1])
+            current = splitter.pages[-1]
+            continue
         candidate = (current + "\n" + line).strip("\n")
         if visible_units(candidate) > limit and current:
             pages.append(current.rstrip())
             current = line
         else:
             current = candidate
-        if visible_units(current) > limit:
-            raise ValueError("Одна строка превышает лимит Telegram")
     if current:
         pages.append(current.rstrip())
     return pages
